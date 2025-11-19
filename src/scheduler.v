@@ -9,25 +9,29 @@
 module scheduler (
     input clk,
     input reset,
-    
+
     // External call requests from floors
     input [`NUM_FLOORS-1:0] up_calls,    // Up button pressed on a floor
     input [`NUM_FLOORS-1:0] down_calls,  // Down button pressed on a floor
-    
+
     // Inputs from Elevator 1 (E1)
     input [`FLOOR_BITS-1:0] current_floor_e1,
     input [1:0] state_e1, // 0=IDLE, 1=DOOR_OPEN, 2=MOVING_UP, 3=MOVING_DOWN
     input moving_up_e1,
     input moving_down_e1,
     input door_open_e1,
-    
+    input request_serviced_e1,              // Pulse when E1 services a floor
+    input [`FLOOR_BITS-1:0] serviced_floor_e1, // Which floor E1 just serviced
+
     // Inputs from Elevator 2 (E2)
     input [`FLOOR_BITS-1:0] current_floor_e2,
     input [1:0] state_e2, // 0=IDLE, 1=DOOR_OPEN, 2=MOVING_UP, 3=MOVING_DOWN
     input moving_up_e2,
     input moving_down_e2,
     input door_open_e2,
-    
+    input request_serviced_e2,              // Pulse when E2 services a floor
+    input [`FLOOR_BITS-1:0] serviced_floor_e2, // Which floor E2 just serviced
+
     // Output: Requests assigned to each elevator
     output reg [`NUM_FLOORS-1:0] requests_to_e1,
     output reg [`NUM_FLOORS-1:0] requests_to_e2
@@ -36,6 +40,12 @@ module scheduler (
     // Internal state for call requests (persists until serviced)
     reg [`NUM_FLOORS-1:0] pending_up_calls;
     reg [`NUM_FLOORS-1:0] pending_down_calls;
+
+    // Track previous direction of each elevator to know which call type to clear
+    reg prev_moving_up_e1;
+    reg prev_moving_down_e1;
+    reg prev_moving_up_e2;
+    reg prev_moving_down_e2;
 
     // FSM states for scheduler decision making (using parameters from elevator_fsm indirectly)
     parameter S_IDLE      = 2'd0;
@@ -59,33 +69,47 @@ module scheduler (
         if (reset) begin
             pending_up_calls <= {`NUM_FLOORS{1'b0}};
             pending_down_calls <= {`NUM_FLOORS{1'b0}};
+            prev_moving_up_e1 <= 1'b0;
+            prev_moving_down_e1 <= 1'b0;
+            prev_moving_up_e2 <= 1'b0;
+            prev_moving_down_e2 <= 1'b0;
         end else begin
+            // Track previous direction for each elevator
+            prev_moving_up_e1 <= moving_up_e1;
+            prev_moving_down_e1 <= moving_down_e1;
+            prev_moving_up_e2 <= moving_up_e2;
+            prev_moving_down_e2 <= moving_down_e2;
+
             // Store new call requests (buttons pressed on floors)
             pending_up_calls <= pending_up_calls | up_calls;
             pending_down_calls <= pending_down_calls | down_calls;
 
-            // Clear call requests if an elevator services them
-            // Elevator 1
-            if (door_open_e1) begin // If E1's door is open at current_floor_e1
-                // Determine if E1 picked up an UP or DOWN request
-                if (state_e1 == S_MOVING_UP) begin // E1 was heading up
-                    pending_up_calls[current_floor_e1] <= 1'b0;
-                end else if (state_e1 == S_MOVING_DOWN) begin // E1 was heading down
-                    pending_down_calls[current_floor_e1] <= 1'b0;
-                end else begin // E1 was IDLE (state_e1 == S_IDLE) and opened door, assumes it serviced any call
-                    pending_up_calls[current_floor_e1] <= 1'b0;
-                    pending_down_calls[current_floor_e1] <= 1'b0;
+            // Clear call requests when elevator signals it serviced a floor
+            // Elevator 1 - use request_serviced pulse (1 cycle, no race condition)
+            if (request_serviced_e1) begin
+                // Determine which call type to clear based on previous direction
+                if (prev_moving_up_e1) begin
+                    // Was moving up, clear up call at serviced floor
+                    pending_up_calls[serviced_floor_e1] <= 1'b0;
+                end else if (prev_moving_down_e1) begin
+                    // Was moving down, clear down call at serviced floor
+                    pending_down_calls[serviced_floor_e1] <= 1'b0;
+                end else begin
+                    // Was idle, clear both call types at serviced floor
+                    pending_up_calls[serviced_floor_e1] <= 1'b0;
+                    pending_down_calls[serviced_floor_e1] <= 1'b0;
                 end
             end
+
             // Elevator 2 (same logic)
-            if (door_open_e2) begin
-                if (state_e2 == S_MOVING_UP) begin
-                    pending_up_calls[current_floor_e2] <= 1'b0;
-                end else if (state_e2 == S_MOVING_DOWN) begin
-                    pending_down_calls[current_floor_e2] <= 1'b0;
+            if (request_serviced_e2) begin
+                if (prev_moving_up_e2) begin
+                    pending_up_calls[serviced_floor_e2] <= 1'b0;
+                end else if (prev_moving_down_e2) begin
+                    pending_down_calls[serviced_floor_e2] <= 1'b0;
                 end else begin
-                    pending_up_calls[current_floor_e2] <= 1'b0;
-                    pending_down_calls[current_floor_e2] <= 1'b0;
+                    pending_up_calls[serviced_floor_e2] <= 1'b0;
+                    pending_down_calls[serviced_floor_e2] <= 1'b0;
                 end
             end
         end
