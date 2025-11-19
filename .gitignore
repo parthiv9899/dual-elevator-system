@@ -1,0 +1,74 @@
+# -------------------------------
+# Verilog Simulation Artifacts
+# -------------------------------
+*.vcd
+*.fst
+*.lxt
+*.vvp
+*.out
+*.o
+*.log
+*.lst
+
+# Icarus Verilog temporary files
+a.out
+iverilog_out
+
+# GTKWave files
+*.gtkw
+*.sav
+
+# -------------------------------
+# Build/Scripts Outputs
+# -------------------------------
+simulation/output/*
+simulation/*.vcd
+simulation/*.out
+
+# -------------------------------
+# OS / Editor Files
+# -------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# VSCode settings
+.vscode/
+.history/
+
+# Temp files
+*~
+*.tmp
+
+# -------------------------------
+# Python (Visualization Backend)
+# -------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/
+
+# virtualenv folders
+env/
+venv/
+
+# pip cache
+pip-wheel-metadata/
+pip-cache/
+
+# -------------------------------
+# Node / Web Visualization Files
+# -------------------------------
+node_modules/
+npm-debug.log
+dist/
+build/
+.cache/
+*.map
+
+# -------------------------------
+# Personal Notes (Private Folder)
+# -------------------------------
+project_notes/
