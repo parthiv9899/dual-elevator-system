@@ -14,6 +14,7 @@ import os
 class Colors:
     RESET = '\033[0m'
     BOLD = '\033[1m'
+    BLACK = '\033[30m'
     RED = '\033[91m'
     GREEN = '\033[92m'
     YELLOW = '\033[93m'
@@ -22,8 +23,13 @@ class Colors:
     CYAN = '\033[96m'
     WHITE = '\033[97m'
     BG_BLACK = '\033[40m'
-    BG_BLUE = '\033[44m'
+    BG_RED = '\033[41m'
     BG_GREEN = '\033[42m'
+    BG_YELLOW = '\033[43m'
+    BG_BLUE = '\033[44m'
+    BG_MAGENTA = '\033[45m'
+    BG_CYAN = '\033[46m'
+    BG_WHITE = '\033[47m'
 
 def clear_screen():
     """Clear terminal screen"""
@@ -39,7 +45,7 @@ def draw_building(e1_floor, e1_state, e2_floor, e2_state, time_ms, requests_pend
     print(f"{Colors.BOLD}{Colors.CYAN}{'='*70}{Colors.RESET}\n")
 
     # Time display
-    print(f"{Colors.WHITE}⏱️  Time: {Colors.GREEN}{time_ms:.2f} sec{Colors.RESET}     " +
+    print(f"{Colors.WHITE}⏱️  Time: {Colors.GREEN}{time_ms:.2f} μs{Colors.RESET}     " +
           f"{Colors.WHITE}📊 Pending Requests: {Colors.YELLOW}{requests_pending}{Colors.RESET}\n")
 
     # State descriptions
@@ -60,26 +66,26 @@ def draw_building(e1_floor, e1_state, e2_floor, e2_state, time_ms, requests_pend
         # Elevator 1 representation
         if floor == e1_floor:
             if e1_state == 1:  # Door open
-                e1_car = f"{Colors.BG_GREEN}{Colors.BLACK} 🚪 OPEN 🚪 {Colors.RESET}"
+                e1_car = f"{Colors.BG_GREEN}{Colors.WHITE}【 🚪 OPEN 】{Colors.RESET}"
             elif e1_state == 2:  # Moving up
-                e1_car = f"{Colors.BG_BLUE}{Colors.WHITE}    ⬆️⬆️⬆️    {Colors.RESET}"
+                e1_car = f"{Colors.BG_BLUE}{Colors.YELLOW}【  ⬆️⬆️⬆️  】{Colors.RESET}"
             elif e1_state == 3:  # Moving down
-                e1_car = f"{Colors.BG_RED}{Colors.WHITE}    ⬇️⬇️⬇️    {Colors.RESET}"
+                e1_car = f"{Colors.BG_RED}{Colors.YELLOW}【  ⬇️⬇️⬇️  】{Colors.RESET}"
             else:  # Idle
-                e1_car = f"{Colors.BG_BLUE}{Colors.WHITE}   IDLE 💤  {Colors.RESET}"
+                e1_car = f"{Colors.BG_WHITE}{Colors.BLUE}【 IDLE 💤 】{Colors.RESET}"
         else:
             e1_car = "             "
 
         # Elevator 2 representation
         if floor == e2_floor:
             if e2_state == 1:  # Door open
-                e2_car = f"{Colors.BG_GREEN}{Colors.BLACK} 🚪 OPEN 🚪 {Colors.RESET}"
+                e2_car = f"{Colors.BG_GREEN}{Colors.WHITE}【 🚪 OPEN 】{Colors.RESET}"
             elif e2_state == 2:  # Moving up
-                e2_car = f"{Colors.BG_BLUE}{Colors.WHITE}    ⬆️⬆️⬆️    {Colors.RESET}"
+                e2_car = f"{Colors.BG_BLUE}{Colors.YELLOW}【  ⬆️⬆️⬆️  】{Colors.RESET}"
             elif e2_state == 3:  # Moving down
-                e2_car = f"{Colors.BG_RED}{Colors.WHITE}    ⬇️⬇️⬇️    {Colors.RESET}"
+                e2_car = f"{Colors.BG_RED}{Colors.YELLOW}【  ⬇️⬇️⬇️  】{Colors.RESET}"
             else:  # Idle
-                e2_car = f"{Colors.BG_BLUE}{Colors.WHITE}   IDLE 💤  {Colors.RESET}"
+                e2_car = f"{Colors.BG_WHITE}{Colors.BLUE}【 IDLE 💤 】{Colors.RESET}"
         else:
             e2_car = "             "
 
@@ -92,10 +98,17 @@ def draw_building(e1_floor, e1_state, e2_floor, e2_state, time_ms, requests_pend
 def run_live_animation():
     """Run simulation and show live animation"""
     print(f"{Colors.BOLD}{Colors.GREEN}🚀 Starting live elevator simulation...{Colors.RESET}")
+    print(f"{Colors.CYAN}   Compiling and running Verilog simulation...{Colors.RESET}\n")
     time.sleep(1)
 
     # Run simulation in background and parse output
     try:
+        # Check if script exists
+        if not os.path.exists('./simulation/run_visualization.sh'):
+            print(f"{Colors.RED}❌ Error: simulation script not found!{Colors.RESET}")
+            print(f"{Colors.YELLOW}   Please run from project root directory.{Colors.RESET}")
+            return
+
         # Use visualization testbench for realistic elevator movement
         process = subprocess.Popen(
             ['./simulation/run_visualization.sh'],
@@ -110,31 +123,53 @@ def run_live_animation():
         e1_floor, e1_state = 0, 0
         e2_floor, e2_state = 0, 0
         frame_count = 0
+        matched_lines = 0
 
         for line in process.stdout:
+            # Print compilation messages
+            if "error" in line.lower() or "Error" in line:
+                print(f"{Colors.RED}{line.strip()}{Colors.RESET}")
+                continue
+
             match = re.search(pattern, line)
             if match:
-                time_val = int(match.group(1)) / 100000  # Convert to seconds (0-10s range)
-                e1_floor = int(match.group(2))
-                e1_state = int(match.group(3))
-                e2_floor = int(match.group(4))
-                e2_state = int(match.group(5))
+                matched_lines += 1
+                try:
+                    time_val = int(match.group(1)) / 1000.0  # Convert nanoseconds to microseconds
+                    e1_floor = int(match.group(2))
+                    e1_state = int(match.group(3))
+                    e2_floor = int(match.group(4))
+                    e2_state = int(match.group(5))
 
-                # Update display every N frames for smooth animation
-                frame_count += 1
-                if frame_count % 1 == 0:  # Update every frame for full duration
-                    draw_building(e1_floor, e1_state, e2_floor, e2_state, time_val, 0)
-                    time.sleep(0.5)  # Slow down for human viewing (real-time ~40 sec)
+                    # Update display every N frames for smooth animation
+                    frame_count += 1
+                    if frame_count % 5 == 0:  # Update every 5 frames for smoother viewing
+                        draw_building(e1_floor, e1_state, e2_floor, e2_state, time_val, 0)
+                        time.sleep(0.1)  # Slow down for human viewing
+                except (ValueError, IndexError) as e:
+                    # Skip malformed lines
+                    continue
 
         process.wait()
 
         # Final display
-        print(f"\n{Colors.BOLD}{Colors.GREEN}✅ Simulation Complete!{Colors.RESET}\n")
+        if matched_lines > 0:
+            print(f"\n{Colors.BOLD}{Colors.GREEN}✅ Simulation Complete! ({matched_lines} frames processed){Colors.RESET}")
+        else:
+            print(f"\n{Colors.YELLOW}⚠️  No simulation data captured. Check if simulation ran correctly.{Colors.RESET}")
+
+        print(f"\n{Colors.CYAN}Press ENTER to continue...{Colors.RESET}")
+        input()
 
     except KeyboardInterrupt:
         print(f"\n{Colors.YELLOW}⚠️  Animation stopped by user{Colors.RESET}")
+    except FileNotFoundError:
+        print(f"\n{Colors.RED}❌ Error: Required tools not found (iverilog/vvp){Colors.RESET}")
+        print(f"{Colors.YELLOW}   Please install Icarus Verilog.{Colors.RESET}")
     except Exception as e:
         print(f"\n{Colors.RED}❌ Error: {e}{Colors.RESET}")
+        import traceback
+        print(f"{Colors.YELLOW}{traceback.format_exc()}{Colors.RESET}")
 
 def show_welcome():
     """Show welcome screen"""
