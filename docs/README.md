@@ -252,4 +252,7 @@ Place images in `/diagrams` folder.
 ---
 
 ## 👥 Team
-(Add names here if required)
+Aadi Mehta
+Chintan Thacker
+Fenil Patel
+Parthiv Karangiya
