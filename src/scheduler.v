@@ -1,194 +1,151 @@
 // src/scheduler.v
-// Module for arbitrating and assigning floor requests to two elevators.
-// This scheduler implements a simplified priority algorithm to assign
-// external call requests to one of two elevators based on their current state,
-// direction, and proximity.
+// This module is the central brain for the dual elevator system.
+// It arbitrates and assigns floor requests to the two elevators based on a
+// priority-based scheduling algorithm that considers elevator state, direction, and proximity.
 
 `include "config.vh"
 
 module scheduler (
-    input clk,
-    input reset,
+  input clk,
+  input reset,
 
-    // External call requests from floors
-    input [`NUM_FLOORS-1:0] up_calls,    // Up button pressed on a floor
-    input [`NUM_FLOORS-1:0] down_calls,  // Down button pressed on a floor
+  // --- External Inputs from Floors ---
+  input [`NUM_FLOORS-1:0] up_calls,
+  input [`NUM_FLOORS-1:0] down_calls,
 
-    // Inputs from Elevator 1 (E1)
-    input [`FLOOR_BITS-1:0] current_floor_e1,
-    input [1:0] state_e1, // 0=IDLE, 1=DOOR_OPEN, 2=MOVING_UP, 3=MOVING_DOWN
-    input moving_up_e1,
-    input moving_down_e1,
-    input door_open_e1,
-    input request_serviced_e1,              // Pulse when E1 services a floor
-    input [`FLOOR_BITS-1:0] serviced_floor_e1, // Which floor E1 just serviced
+  // --- Inputs from Elevator 1 ---
+  input [`FLOOR_BITS-1:0] current_floor_e1,
+  input [1:0] state_e1,
+  input moving_up_e1,
+  input moving_down_e1,
+  input request_serviced_e1,
+  input [`FLOOR_BITS-1:0] serviced_floor_e1,
 
-    // Inputs from Elevator 2 (E2)
-    input [`FLOOR_BITS-1:0] current_floor_e2,
-    input [1:0] state_e2, // 0=IDLE, 1=DOOR_OPEN, 2=MOVING_UP, 3=MOVING_DOWN
-    input moving_up_e2,
-    input moving_down_e2,
-    input door_open_e2,
-    input request_serviced_e2,              // Pulse when E2 services a floor
-    input [`FLOOR_BITS-1:0] serviced_floor_e2, // Which floor E2 just serviced
+  // --- Inputs from Elevator 2 ---
+  input [`FLOOR_BITS-1:0] current_floor_e2,
+  input [1:0] state_e2,
+  input moving_up_e2,
+  input moving_down_e2,
+  input request_serviced_e2,
+  input [`FLOOR_BITS-1:0] serviced_floor_e2,
 
-    // Output: Requests assigned to each elevator
-    output reg [`NUM_FLOORS-1:0] requests_to_e1,
-    output reg [`NUM_FLOORS-1:0] requests_to_e2
+  // --- Outputs to Elevators ---
+  output reg [`NUM_FLOORS-1:0] requests_to_e1,
+  output reg [`NUM_FLOORS-1:0] requests_to_e2
 );
 
-    // Internal state for call requests (persists until serviced)
-    reg [`NUM_FLOORS-1:0] pending_up_calls;
-    reg [`NUM_FLOORS-1:0] pending_down_calls;
+  // --- FSM State Parameters (matching elevator_fsm.v) ---
+  parameter S_IDLE      = 2'd0;
+  parameter S_MOVING_UP = 2'd2;
+  parameter S_MOVING_DOWN = 2'd3;
 
-    // Track previous direction of each elevator to know which call type to clear
-    reg prev_moving_up_e1;
-    reg prev_moving_down_e1;
-    reg prev_moving_up_e2;
-    reg prev_moving_down_e2;
+  // --- Internal Registers for Pending Calls ---
+  // These registers hold floor call requests until they are serviced.
+  reg [`NUM_FLOORS-1:0] pending_up_calls;
+  reg [`NUM_FLOORS-1:0] pending_down_calls;
 
-    // FSM states for scheduler decision making (using parameters from elevator_fsm indirectly)
-    parameter S_IDLE      = 2'd0;
-    parameter S_DOOR_OPEN = 2'd1;
-    parameter S_MOVING_UP = 2'd2;
-    parameter S_MOVING_DOWN = 2'd3;
+  // --- Sequential Logic for Managing Call Requests ---
+  always @(posedge clk or posedge reset) begin
+    if (reset) begin
+      pending_up_calls <= 0;
+      pending_down_calls <= 0;
+    end else begin
+      // Latch new external calls
+      pending_up_calls <= pending_up_calls | up_calls;
+      pending_down_calls <= pending_down_calls | down_calls;
 
-    // Loop counter and decision flags, declared at module level for Verilog-2001 compatibility
+      // Clear serviced calls for Elevator 1
+      if (request_serviced_e1) begin
+        pending_up_calls[serviced_floor_e1] <= 1'b0;
+        pending_down_calls[serviced_floor_e1] <= 1'b0;
+      end
+
+      // Clear serviced calls for Elevator 2
+      if (request_serviced_e2) begin
+        pending_up_calls[serviced_floor_e2] <= 1'b0;
+        pending_down_calls[serviced_floor_e2] <= 1'b0;
+      end
+    end
+  end
+
+  // --- Combinational Logic for Scheduling Algorithm ---
+  always @(*) begin
     integer floor;
-    reg assign_to_e1;
-    reg assign_to_e2;
-    reg e1_can_pickup;
-    reg e2_can_pickup;
-    reg [`FLOOR_BITS:0] dist_e1; // distance must be able to hold larger value than floor bits
-    reg [`FLOOR_BITS:0] dist_e2;
+    integer cost_e1;
+    integer cost_e2;
 
+    // Default outputs
+    requests_to_e1 = 0;
+    requests_to_e2 = 0;
 
-    // Logic to update pending call requests
-    // This block stores new requests and clears requests once serviced by an elevator.
-    always @(posedge clk or posedge reset) begin
-        if (reset) begin
-            pending_up_calls <= {`NUM_FLOORS{1'b0}};
-            pending_down_calls <= {`NUM_FLOORS{1'b0}};
-            prev_moving_up_e1 <= 1'b0;
-            prev_moving_down_e1 <= 1'b0;
-            prev_moving_up_e2 <= 1'b0;
-            prev_moving_down_e2 <= 1'b0;
+    // Iterate through each floor to check for pending requests
+    for (floor = 0; floor < `NUM_FLOORS; floor = floor + 1) begin
+      // --- UP CALL SCHEDULING ---
+      if (pending_up_calls[floor]) begin
+        // Calculate cost for each elevator to service this up call
+        cost_e1 = calculate_cost(floor, current_floor_e1, state_e1, moving_up_e1, 1'b1);
+        cost_e2 = calculate_cost(floor, current_floor_e2, state_e2, moving_up_e2, 1'b1);
+
+        // Assign to the elevator with the lower cost
+        if (cost_e1 <= cost_e2) begin
+          requests_to_e1[floor] = 1'b1;
         end else begin
-            // Track previous direction for each elevator
-            prev_moving_up_e1 <= moving_up_e1;
-            prev_moving_down_e1 <= moving_down_e1;
-            prev_moving_up_e2 <= moving_up_e2;
-            prev_moving_down_e2 <= moving_down_e2;
-
-            // Store new call requests (buttons pressed on floors)
-            pending_up_calls <= pending_up_calls | up_calls;
-            pending_down_calls <= pending_down_calls | down_calls;
-
-            // Clear call requests when elevator signals it serviced a floor
-            // Elevator 1 - use request_serviced pulse (1 cycle, no race condition)
-            if (request_serviced_e1) begin
-                // Determine which call type to clear based on previous direction
-                if (prev_moving_up_e1) begin
-                    // Was moving up, clear up call at serviced floor
-                    pending_up_calls[serviced_floor_e1] <= 1'b0;
-                end else if (prev_moving_down_e1) begin
-                    // Was moving down, clear down call at serviced floor
-                    pending_down_calls[serviced_floor_e1] <= 1'b0;
-                end else begin
-                    // Was idle, clear both call types at serviced floor
-                    pending_up_calls[serviced_floor_e1] <= 1'b0;
-                    pending_down_calls[serviced_floor_e1] <= 1'b0;
-                end
-            end
-
-            // Elevator 2 (same logic)
-            if (request_serviced_e2) begin
-                if (prev_moving_up_e2) begin
-                    pending_up_calls[serviced_floor_e2] <= 1'b0;
-                end else if (prev_moving_down_e2) begin
-                    pending_down_calls[serviced_floor_e2] <= 1'b0;
-                end else begin
-                    pending_up_calls[serviced_floor_e2] <= 1'b0;
-                    pending_down_calls[serviced_floor_e2] <= 1'b0;
-                end
-            end
+          requests_to_e2[floor] = 1'b1;
         end
+      end
+
+      // --- DOWN CALL SCHEDULING ---
+      if (pending_down_calls[floor]) begin
+        // Calculate cost for each elevator to service this down call
+        cost_e1 = calculate_cost(floor, current_floor_e1, state_e1, moving_down_e1, 1'b0);
+        cost_e2 = calculate_cost(floor, current_floor_e2, state_e2, moving_down_e2, 1'b0);
+
+        // Assign to the elevator with the lower cost
+        if (cost_e1 <= cost_e2) begin
+          requests_to_e1[floor] = 1'b1;
+        end else begin
+          requests_to_e2[floor] = 1'b1;
+        end
+      end
+    end
+  end
+
+  // --- Cost Calculation Function ---
+  // This function calculates a 'cost' for an elevator to service a request.
+  // A lower cost means a higher priority.
+  function integer calculate_cost(input [`FLOOR_BITS-1:0] request_floor,
+                                   input [`FLOOR_BITS-1:0] elev_floor,
+                                   input [1:0] elev_state,
+                                   input elev_direction, // 1 for up, 0 for down
+                                   input request_is_up);
+    integer distance;
+    integer direction_mismatch;
+    integer state_penalty;
+
+    // 1. Distance Cost: The primary factor is the distance to the floor.
+    if (elev_floor > request_floor) begin
+      distance = elev_floor - request_floor;
+    end else begin
+      distance = request_floor - elev_floor;
     end
 
-    // Combinational logic for assigning requests to elevators
-    always @(*) begin
-        requests_to_e1 = {`NUM_FLOORS{1'b0}}; // Default to no requests for E1
-        requests_to_e2 = {`NUM_FLOORS{1'b0}}; // Default to no requests for E2
-
-        // Iterate through all floors to decide assignment for each pending request
-        for (floor = 0; floor < `NUM_FLOORS; floor = floor + 1) begin
-            // Only assign if there is a pending call request at this floor
-            if (pending_up_calls[floor] || pending_down_calls[floor]) begin
-                // Initialize flags for current floor's assignment
-                assign_to_e1 = 1'b0;
-                assign_to_e2 = 1'b0;
-
-                // Calculate distances to current floor
-                dist_e1 = (current_floor_e1 > floor) ? (current_floor_e1 - floor) : (floor - current_floor_e1);
-                dist_e2 = (current_floor_e2 > floor) ? (current_floor_e2 - floor) : (floor - current_floor_e2);
-
-                // --- Decision Logic for assigning a request at 'floor' ---
-                // Priority: 1. Idle, 2. On-path, 3. Closest
-
-                // 1. Check for IDLE elevators
-                if (state_e1 == S_IDLE && state_e2 != S_IDLE) begin
-                    assign_to_e1 = 1'b1;
-                end else if (state_e2 == S_IDLE && state_e1 != S_IDLE) begin
-                    assign_to_e2 = 1'b1;
-                end else if (state_e1 == S_IDLE && state_e2 == S_IDLE) begin
-                    // Both idle, assign to closest
-                    if (dist_e1 <= dist_e2) begin
-                        assign_to_e1 = 1'b1;
-                    end else begin
-                        assign_to_e2 = 1'b1;
-                    end
-                end 
-                // 2. If no idle elevators, check for elevators MOVING IN THE SAME DIRECTION AND CAN PICK UP
-                else begin 
-                    // Initialize flags
-                    e1_can_pickup = 1'b0;
-                    e2_can_pickup = 1'b0;
-
-                    // Check if E1 can pick up (moving up and request is above or at current floor, or moving down and request is below or at current floor)
-                    if (pending_up_calls[floor] && moving_up_e1 && (current_floor_e1 <= floor)) e1_can_pickup = 1'b1;
-                    if (pending_down_calls[floor] && moving_down_e1 && (current_floor_e1 >= floor)) e1_can_pickup = 1'b1;
-                    
-                    // Check if E2 can pick up
-                    if (pending_up_calls[floor] && moving_up_e2 && (current_floor_e2 <= floor)) e2_can_pickup = 1'b1;
-                    if (pending_down_calls[floor] && moving_down_e2 && (current_floor_e2 >= floor)) e2_can_pickup = 1'b1;
-
-                    if (e1_can_pickup && !e2_can_pickup) begin
-                        assign_to_e1 = 1'b1;
-                    end else if (!e1_can_pickup && e2_can_pickup) begin
-                        assign_to_e2 = 1'b1;
-                    end else if (e1_can_pickup && e2_can_pickup) begin
-                        // Both can pick up, assign to closest on path
-                        if (dist_e1 <= dist_e2) begin
-                            assign_to_e1 = 1'b1;
-                        end else begin
-                            assign_to_e2 = 1'b1;
-                        end
-                    end else begin
-                        // 3. Neither idle nor on path, assign to CLOSEST (ignoring direction for now)
-                        if (dist_e1 <= dist_e2) begin
-                            assign_to_e1 = 1'b1;
-                        end else begin
-                            assign_to_e2 = 1'b1;
-                        end
-                    end
-                end
-                
-                // Final assignment (a request can be assigned to both if logic dictates, but typically to one)
-                // For simplicity, if both are flagged, the one with smaller ID (E1) gets it.
-                if (assign_to_e1) requests_to_e1[floor] = 1'b1;
-                else if (assign_to_e2) requests_to_e2[floor] = 1'b1;
-            end
-        end
+    // 2. Direction Mismatch Penalty: Penalize if the elevator is moving in the opposite direction.
+    direction_mismatch = 0;
+    if (elev_state == S_MOVING_UP && request_floor < elev_floor) begin
+      direction_mismatch = 50; // Heavy penalty for moving away
     end
+    if (elev_state == S_MOVING_DOWN && request_floor > elev_floor) begin
+      direction_mismatch = 50; // Heavy penalty for moving away
+    end
+
+    // 3. State Penalty: IDLE elevators are the best candidates.
+    state_penalty = 0;
+    if (elev_state != S_IDLE) begin
+      state_penalty = 10;
+    end
+
+    // Total Cost: A weighted sum of the factors.
+    calculate_cost = (distance * 2) + direction_mismatch + state_penalty;
+  endfunction
 
 endmodule

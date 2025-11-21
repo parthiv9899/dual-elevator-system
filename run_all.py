@@ -64,8 +64,23 @@ def run_shell_script(script_path, description):
     print(f"{Colors.BOLD}Running: {description}{Colors.RESET}")
     print(f"{Colors.CYAN}{'='*70}{Colors.RESET}\n")
 
+    if os.name == 'nt':
+        script_path = script_path.replace('.sh', '.bat')
+
     try:
-        result = subprocess.run([script_path], check=False)
+        # For .bat files, we might need to run with shell=True on Windows
+        # For .sh files, the direct list is fine.
+        is_windows_batch = os.name == 'nt' and script_path.endswith('.bat')
+        
+        # The script path needs to be adjusted for Windows
+        if is_windows_batch:
+            # subprocess.run on Windows prefers the command as a string with shell=True
+            # Also, use os.path.join to create a system-agnostic path
+            command = os.path.join(*script_path.split('/'))
+            result = subprocess.run(command, check=False, shell=True)
+        else:
+            result = subprocess.run([script_path], check=False)
+            
         return result.returncode
     except Exception as e:
         print(f"\n{Colors.RED}❌ Error: {e}{Colors.RESET}")

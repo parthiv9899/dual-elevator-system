@@ -9,3 +9,9 @@
 // Calculates the number of bits required to represent the floor numbers.
 // For N floors, we need clog2(N) bits. For example, 8 floors need 3 bits (0-7).
 `define FLOOR_BITS $clog2(`NUM_FLOORS)
+
+// Defines the number of clock cycles the door remains open.
+`define DOOR_TIMER_CYCLES 5
+
+// Defines the number of clock cycles it takes to move one floor.
+`define MOVE_TIMER_CYCLES 10
